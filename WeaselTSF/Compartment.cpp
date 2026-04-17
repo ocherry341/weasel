@@ -3,6 +3,7 @@
 #include "Compartment.h"
 #include <resource.h>
 #include <functional>
+#include <KeyEvent.h>
 #include "ResponseParser.h"
 #include "CandidateList.h"
 #include "LanguageBar.h"
@@ -253,16 +254,46 @@ HRESULT WeaselTSF::_HandleCompartment(REFGUID guidCompartment) {
       _EnableLanguageBar(isOpen);
       _UpdateLanguageBar(_status);
     } else {
-      _status.ascii_mode = !_status.ascii_mode;
+      // Restore keyboard open first so the server won't drop subsequent
+      // key events as "keyboard closed".
       _SetKeyboardOpen(true);
+
+      // Ctrl+Space bypasses the normal key pipeline, so configured
+      // key_binder/ascii_composer bindings never see it. Instead synthesize
+      // a pure Shift_L press/release here and let librime's ascii_composer
+      // handle the switch according to its switch_key/Shift_L setting
+      // (commit_code by default).
+      //
+      // Pre-release both Ctrl keys first: the user is physically holding
+      // Ctrl while pressing Space, so Ctrl_L is in librime's pending
+      // switch_key set. Without clearing it, the Shift_L release wouldn't
+      // be "pure" and ascii_composer would ignore it.
+      if (_pEditSessionContext && _EnsureServerConnected()) {
+        m_client.ProcessKeyEvent(
+            weasel::KeyEvent{ibus::Control_L, ibus::RELEASE_MASK});
+        m_client.ProcessKeyEvent(
+            weasel::KeyEvent{ibus::Control_R, ibus::RELEASE_MASK});
+
+        // Match ConvertKeyEvent's output for a real Shift press/release:
+        //   press  -> SHIFT_MASK set (Shift is currently down)
+        //   release-> RELEASE_MASK only (Shift no longer down)
+        m_client.ProcessKeyEvent(
+            weasel::KeyEvent{ibus::Shift_L, ibus::SHIFT_MASK});
+        m_client.ProcessKeyEvent(
+            weasel::KeyEvent{ibus::Shift_L, ibus::RELEASE_MASK});
+
+        _UpdateComposition(_pEditSessionContext);
+      } else {
+        // No active edit session context: just toggle ascii_mode locally
+        // and tell the server via the tray command path.
+        _status.ascii_mode = !_status.ascii_mode;
+        _HandleLangBarMenuSelect(_status.ascii_mode
+                                     ? ID_WEASELTRAY_ENABLE_ASCII
+                                     : ID_WEASELTRAY_DISABLE_ASCII);
+        _UpdateLanguageBar(_status);
+      }
       if (_pLangBarButton && _pLangBarButton->IsLangBarDisabled())
         _EnableLanguageBar(true);
-      _HandleLangBarMenuSelect(_status.ascii_mode
-                                   ? ID_WEASELTRAY_ENABLE_ASCII
-                                   : ID_WEASELTRAY_DISABLE_ASCII);
-      if (_pEditSessionContext)
-        m_client.ClearComposition();
-      _UpdateLanguageBar(_status);
     }
   } else if (IsEqualGUID(guidCompartment,
                          GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION)) {
