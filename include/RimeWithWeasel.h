@@ -120,4 +120,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   bool m_global_ascii_mode;
   int m_show_notifications_time;
   DWORD m_pid;
+  // Ctrl+Space 合成事件 keycode，默认 Shift_L（保持旧行为）。
+  // weasel.yaml::ctrl_space_key 配置在 Initialize() 中解析覆盖。
+  UINT32 m_ctrl_space_keycode;
 };

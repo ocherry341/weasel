@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <string>
 #include <vector>
@@ -187,9 +187,14 @@ struct Status {
 
 // 用於向前端告知設置信息
 struct Config {
-  Config() : inline_preedit(false) {}
-  void reset() { inline_preedit = false; }
+  Config() : inline_preedit(false), ctrl_space_keycode(0) {}
+  void reset() {
+    inline_preedit = false;
+    ctrl_space_keycode = 0;
+  }
   bool inline_preedit;
+  // Ctrl+Space 合成事件的 keycode；0 表示未设置/禁用，消费端决定默认值
+  unsigned int ctrl_space_keycode;
 };
 
 struct UIStyle {

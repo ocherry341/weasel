@@ -1,5 +1,6 @@
-﻿#include "stdafx.h"
+#include "stdafx.h"
 #include <logging.h>
+#include <KeyEvent.h>
 #include <RimeWithWeasel.h>
 #include <StringAlgorithm.hpp>
 #include <WeaselConstants.h>
@@ -10,6 +11,7 @@
 #include <array>
 #include <vector>
 #include <regex>
+#include <unordered_map>
 #include <rime_api.h>
 
 #define TRANSPARENT_COLOR 0x00000000
@@ -22,6 +24,20 @@
 typedef enum { COLOR_ABGR = 0, COLOR_ARGB, COLOR_RGBA } ColorFormat;
 
 using namespace weasel;
+
+// 把 weasel.yaml::ctrl_space_key 配置名解析成 ibus keycode。
+// 特殊返回值：0 表示显式禁用；未识别的名字回落为 Shift_L（默认行为）。
+static UINT32 parse_ctrl_space_key(const std::string& name) {
+  static const std::unordered_map<std::string, UINT32> table = {
+      {"Shift_L", ibus::Shift_L},    {"Shift_R", ibus::Shift_R},
+      {"Alt_L", ibus::Alt_L},        {"Alt_R", ibus::Alt_R},
+      {"Eisu_toggle", ibus::Eisu_toggle},
+  };
+  if (name == "disable" || name == "none")
+    return 0;
+  auto it = table.find(name);
+  return it == table.end() ? ibus::Shift_L : it->second;
+}
 
 static RimeApi* rime_api;
 WeaselSessionId _GenerateNewWeaselSessionId(SessionStatusMap sm, DWORD pid) {
@@ -41,7 +57,8 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
       m_current_dark_mode(false),
       m_global_ascii_mode(false),
       m_show_notifications_time(1200),
-      _UpdateUICallback(NULL) {
+      _UpdateUICallback(NULL),
+      m_ctrl_space_keycode(ibus::Shift_L) {
   m_ui->InServer() = true;
   rime_api = rime_get_api();
   assert(rime_api);
@@ -140,6 +157,14 @@ void RimeWithWeaselHandler::Initialize() {
     if (!rime_api->config_get_int(&config, "show_notifications_time",
                                   &m_show_notifications_time))
       m_show_notifications_time = 1200;
+    {
+      char buf[64] = {0};
+      if (rime_api->config_get_string(&config, "ctrl_space_key", buf,
+                                      sizeof(buf))) {
+        m_ctrl_space_keycode = parse_ctrl_space_key(buf);
+      }
+      // 未配置：保持 ctor 中的默认值 ibus::Shift_L
+    }
     _LoadAppOptions(&config, m_app_options);
     rime_api->config_close(&config);
   }
@@ -897,6 +922,9 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
   actions.push_back("config");
   body.append(L"config.inline_preedit=")
       .append(std::to_wstring((int)session_status.style.inline_preedit))
+      .append(L"\n");
+  body.append(L"config.ctrl_space_keycode=")
+      .append(std::to_wstring(m_ctrl_space_keycode))
       .append(L"\n");
 
   // style

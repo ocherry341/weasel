@@ -17,6 +17,14 @@ show_notifications_time: 1200
 # use global ascii status
 global_ascii: false
 
+# Ctrl+Space 合成哪个按键事件。最终行为由 default.yaml 里
+# ascii_composer/switch_key/<key> 决定（默认 commit_code，可改为
+# inline_ascii / commit_text / clear / set_ascii_mode /
+# unset_ascii_mode / noop）。
+# 可选 key: Shift_L (默认), Shift_R, Alt_L, Alt_R, Eisu_toggle, disable
+# 推荐 Eisu_toggle：无物理按键映射，可独立配置、无冲突
+ctrl_space_key: Shift_L
+
 style:
   antialias_mode: default
   ascii_tip_follow_cursor: false

@@ -48,6 +48,36 @@ STDAPI CCompartmentEventSink::OnChange(_In_ REFGUID guidCompartment) {
   return _callback(guidCompartment);
 }
 
+// 对应合成 keycode 的 modifier mask（press 事件使用）。
+static UINT32 press_mask_for(UINT32 keycode) {
+  switch (keycode) {
+    case ibus::Shift_L:
+    case ibus::Shift_R:
+      return ibus::SHIFT_MASK;
+    case ibus::Alt_L:
+    case ibus::Alt_R:
+      return ibus::MOD1_MASK;
+    case ibus::Eisu_toggle:
+    default:
+      return 0;
+  }
+}
+
+// 修饰键（Shift/Alt）：ascii_composer 在 release 时触发动作，需要发 press+release。
+// Toggle 键（Eisu_toggle）：ascii_composer 在 press 时立即触发，release 会再次触发
+// 导致动作执行两次相互抵消；只发 press 即可。
+static bool should_send_release(UINT32 keycode) {
+  switch (keycode) {
+    case ibus::Shift_L:
+    case ibus::Shift_R:
+    case ibus::Alt_L:
+    case ibus::Alt_R:
+      return true;
+    default:
+      return false;
+  }
+}
+
 HRESULT CCompartmentEventSink::_Advise(_In_ com_ptr<IUnknown> punk,
                                        _In_ REFGUID guidCompartment) {
   HRESULT hr = S_OK;
@@ -260,29 +290,39 @@ HRESULT WeaselTSF::_HandleCompartment(REFGUID guidCompartment) {
 
       // Ctrl+Space bypasses the normal key pipeline, so configured
       // key_binder/ascii_composer bindings never see it. Instead synthesize
-      // a pure Shift_L press/release here and let librime's ascii_composer
-      // handle the switch according to its switch_key/Shift_L setting
-      // (commit_code by default).
+      // a configurable keycode (default Shift_L) press/release here and let
+      // librime's ascii_composer handle the switch according to its
+      // switch_key/<keycode> setting (commit_code by default).
+      //
+      // The synthesized keycode comes from weasel.yaml::ctrl_space_key via
+      // server-side Config. 0 means explicitly disabled.
       //
       // Pre-release both Ctrl keys first: the user is physically holding
       // Ctrl while pressing Space, so Ctrl_L is in librime's pending
-      // switch_key set. Without clearing it, the Shift_L release wouldn't
-      // be "pure" and ascii_composer would ignore it.
-      if (_pEditSessionContext && _EnsureServerConnected()) {
+      // switch_key set. Without clearing it, the synthesized release
+      // wouldn't be "pure" and ascii_composer would ignore it.
+      UINT32 keycode = _config.ctrl_space_keycode;
+      if (keycode != 0 && _pEditSessionContext && _EnsureServerConnected()) {
         m_client.ProcessKeyEvent(
             weasel::KeyEvent{ibus::Control_L, ibus::RELEASE_MASK});
         m_client.ProcessKeyEvent(
             weasel::KeyEvent{ibus::Control_R, ibus::RELEASE_MASK});
 
-        // Match ConvertKeyEvent's output for a real Shift press/release:
-        //   press  -> SHIFT_MASK set (Shift is currently down)
-        //   release-> RELEASE_MASK only (Shift no longer down)
-        m_client.ProcessKeyEvent(
-            weasel::KeyEvent{ibus::Shift_L, ibus::SHIFT_MASK});
-        m_client.ProcessKeyEvent(
-            weasel::KeyEvent{ibus::Shift_L, ibus::RELEASE_MASK});
+        // Match ConvertKeyEvent's output for a real key press/release:
+        //   press  -> corresponding modifier mask (or 0 for non-modifier)
+        //   release-> RELEASE_MASK only
+        UINT32 pmask = press_mask_for(keycode);
+        m_client.ProcessKeyEvent(weasel::KeyEvent{keycode, pmask});
+        if (should_send_release(keycode)) {
+          m_client.ProcessKeyEvent(
+              weasel::KeyEvent{keycode, ibus::RELEASE_MASK});
+        }
 
         _UpdateComposition(_pEditSessionContext);
+      } else if (keycode == 0) {
+        // Explicitly disabled via ctrl_space_key: disable/none. Keep the
+        // keyboard open and refresh the language bar, but don't toggle
+        // ascii mode.
       } else {
         // No active edit session context: just toggle ascii_mode locally
         // and tell the server via the tray command path.
@@ -299,7 +339,7 @@ HRESULT WeaselTSF::_HandleCompartment(REFGUID guidCompartment) {
                          GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION)) {
     BOOL isOpen = _IsKeyboardOpen();
     if (isOpen) {
-      weasel::ResponseParser parser(NULL, NULL, &_status, NULL,
+      weasel::ResponseParser parser(NULL, NULL, &_status, &_config,
                                     &_cand->style());
       bool ok = m_client.GetResponseData(std::ref(parser));
       _UpdateLanguageBar(_status);

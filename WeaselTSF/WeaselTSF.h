@@ -227,6 +227,8 @@ class WeaselTSF : public ITfTextInputProcessorEx,
 
   /* IME status */
   weasel::Status _status;
+  /* 从服务端同步的配置（含 Ctrl+Space 合成 keycode 等） */
+  weasel::Config _config;
 
   // guidatom for the display attibute.
   TfGuidAtom _gaDisplayAttributeInput;
