@@ -302,6 +302,21 @@ HRESULT WeaselTSF::_HandleCompartment(REFGUID guidCompartment) {
       // switch_key set. Without clearing it, the synthesized release
       // wouldn't be "pure" and ascii_composer would ignore it.
       UINT32 keycode = _config.ctrl_space_keycode;
+      bool config_synced = (keycode != 0);
+      if (!config_synced && _EnsureServerConnected()) {
+        // On a cold start, TSF may see the default 0 before the first
+        // response sync arrives. Pull one response here so we can
+        // distinguish "not synced yet" from an explicit disable.
+        m_client.ProcessKeyEvent(0);
+        weasel::ResponseParser parser(NULL, NULL, &_status, &_config, NULL);
+        if (m_client.GetResponseData(std::ref(parser))) {
+          keycode = _config.ctrl_space_keycode;
+          config_synced = true;
+        }
+      }
+      if (!config_synced) {
+        keycode = ibus::Shift_L;
+      }
       if (keycode != 0 && _pEditSessionContext && _EnsureServerConnected()) {
         m_client.ProcessKeyEvent(
             weasel::KeyEvent{ibus::Control_L, ibus::RELEASE_MASK});
